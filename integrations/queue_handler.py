@@ -1,11 +1,13 @@
 # integrations/queue_handler.py
 import queue
 
+from typing import Optional
+
 # Global queue for incoming translations
 # Format: {"chunk_id": int, "translation": str}
 translation_queue = queue.Queue()
 
-def push_translation(chunk_id: int, translation: str):
+def push_translation(chunk_id: Optional[int], translation: str):
     """Pushes a received translation into the queue."""
     translation_queue.put({"chunk_id": chunk_id, "translation": translation})
 

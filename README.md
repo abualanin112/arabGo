@@ -58,9 +58,15 @@ arabGo includes an optional integration layer for AI-assisted translation (e.g.,
 5. **Configure ChatGPT**:
    - Copy the Ngrok URL.
    - Use it in a ChatGPT Action to POST translations to: `{NGROK_URL}/api/submit_translation`
-   - Payload format: `{"chunk_id": 1, "translation": "[1] Your translation here..."}`
-6. **Auto-Injection**: Translations automatically appear in the editor if that chunk is currently selected.
-7. **Validation & Save**: Review the injected text, let the auto-validation run, and click "Save Chunk to Session" manually.
+   - Payload format: `{"translation": "[1] Your translation here..."}`
+   - **Note**: `chunk_id` is optional. The application will automatically select the next pending chunk.
+6. **Auto-Injection**: When a translation is received with a valid signature, the app automatically selects the matching chunk and injects the translation.
+7. **Full Automation (Optional)**:
+   - Check **"Full Automation (Auto-Save & Finalize)"**.
+   - Validated translations will be saved automatically.
+   - The final merged file will be generated automatically once all chunks are done.
+   - Manual buttons are disabled in this mode to prevent conflicts.
+8. **Validation & Save (Manual)**: If Full Automation is OFF, review the injected text and click "Save Chunk to Session" manually.
 
 ### 3. Safety & Control
 

@@ -17,7 +17,15 @@ class SubtitleUI(tk.Frame):
         self.btn_select_dir = ttk.Button(self.sidebar, text="Scan Folder")
         self.btn_select_dir.pack(fill=tk.X, padx=5, pady=5)
         
-        self.file_listbox = tk.Listbox(self.sidebar, selectmode=tk.SINGLE, font=("Segoe UI", 9))
+        self.file_listbox = tk.Listbox(
+            self.sidebar, 
+            selectmode=tk.SINGLE, 
+            font=("Segoe UI", 9),
+            exportselection=False,
+            selectbackground="#0078d7",
+            selectforeground="white",
+            activestyle='none'
+        )
         self.file_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Right Panel: Side-by-Side Viewers
@@ -61,6 +69,7 @@ class SubtitleUI(tk.Frame):
 
         self.automation_vars = {
             "enabled": tk.BooleanVar(value=False),
+            "full_auto": tk.BooleanVar(value=False),
             "url": tk.StringVar(value="Inactive"),
             "status": tk.StringVar(value="Stopped")
         }
@@ -70,6 +79,9 @@ class SubtitleUI(tk.Frame):
 
         self.auto_enable_check = ttk.Checkbutton(auto_toggle_frame, text="Enable AI Automation", variable=self.automation_vars["enabled"])
         self.auto_enable_check.pack(side=tk.LEFT)
+
+        self.full_auto_check = ttk.Checkbutton(auto_toggle_frame, text="Full Automation (Auto-Save & Finalize)", variable=self.automation_vars["full_auto"])
+        self.full_auto_check.pack(side=tk.LEFT, padx=20)
 
         self.auto_controls_frame = ttk.Frame(self.auto_frame)
         self.auto_controls_frame.pack(fill=tk.X, padx=10, pady=5)

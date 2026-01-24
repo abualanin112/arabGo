@@ -3,12 +3,13 @@ import queue
 import threading
 import time
 import tkinter as tk
-from integrations import endpoint_server, ngrok_manager, queue_handler
+from integrations import endpoint_server, ngrok_manager, queue_handler, session_manager
 from tkinter import filedialog, messagebox
 from core.file_ops import scan_directory_threaded, atomic_save
 from core.vtt_converter import normalize_file
 from core.domain import SubtitleDocument
 from core.session import TranslationSession
+from core.chunking import TranslationChunk
 
 class UILogic:
     def __init__(self, view, root):
@@ -39,6 +40,7 @@ class UILogic:
         self.view.start_ngrok_btn.config(command=self.start_ngrok)
         self.view.stop_auto_btn.config(command=self.stop_automation_layer)
         self.view.copy_url_btn.config(command=self.copy_url_to_clipboard)
+        self.view.full_auto_check.config(command=self.toggle_automation)
         
         # Initial automation state
         self.toggle_automation()
@@ -72,6 +74,13 @@ class UILogic:
                             self.view.append_log(f"Original VTT deleted after successful validation.")
                         
                         self.view.file_listbox.insert(tk.END, norm_path)
+                        
+                        # If this file was already current_file, re-highlight and re-select it
+                        if self.current_file == norm_path:
+                            last_idx = self.view.file_listbox.size() - 1
+                            self.view.file_listbox.selection_set(last_idx)
+                            self.view.file_listbox.itemconfig(last_idx, bg="#cfe8fc", fg="black")
+
                     except Exception as e:
                         self.view.append_log(f"Error normalizing {os.path.basename(f)}: {e}")
                 
@@ -90,6 +99,11 @@ class UILogic:
         file_path = self.view.file_listbox.get(selection[0])
         self.current_file = file_path
         
+        # UI Feedback: Reset all backgrounds and highlight the active one
+        for i in range(self.view.file_listbox.size()):
+            self.view.file_listbox.itemconfig(i, bg="white", fg="black")
+        self.view.file_listbox.itemconfig(selection[0], bg="#cfe8fc", fg="black") # Light blue active indicator
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -99,6 +113,11 @@ class UILogic:
             
             # Initialize Session
             self.session = TranslationSession(doc)
+            
+            # Initialize SessionManager for automation
+            sm = session_manager.initialize_session()
+            for chunk in self.session.chunks:
+                sm.initialize_chunk(chunk.signature)
             
             # Update Chunk Selector
             chunk_names = [f"Chunk {c.chunk_id} (Blocks {c.start_index}-{c.end_index})" for c in self.session.chunks]
@@ -149,10 +168,21 @@ class UILogic:
                 self.view.btn_final_save.config(state=tk.DISABLED)
 
     def on_copy_all(self):
-        text = self.view.txt_original.get(1.0, tk.END)
+        if not self.session:
+            return
+        
+        idx = self.view.chunk_combo.current()
+        if idx < 0:
+            return
+        
+        chunk = self.session.chunks[idx]
+        
+        # Use extract_text_with_signature for AI automation
+        # This embeds the chunk signature for deterministic matching
+        text = chunk.extract_text_with_signature()
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
-        self.view.append_log("Current chunk text copied to clipboard.")
+        self.view.append_log(f"Chunk {chunk.chunk_id} copied with embedded signature.")
 
     def on_paste_translation_clicked(self):
         try:
@@ -217,6 +247,12 @@ class UILogic:
         
         self.session.mark_chunk_complete(chunk.chunk_id, trans_lines)
         self.view.append_log(f"Chunk {chunk.chunk_id} saved to session memory.")
+        
+        # Mark chunk as COMPLETED in SessionManager
+        sm = session_manager.get_session_manager()
+        if sm:
+            sm.mark_chunk_completed(chunk.signature)
+        
         self.update_session_stats()
 
     def on_final_save_clicked(self):
@@ -241,6 +277,7 @@ class UILogic:
 
     def toggle_automation(self):
         enabled = self.view.automation_vars["enabled"].get()
+        full_auto = self.view.automation_vars["full_auto"].get()
         state = tk.NORMAL if enabled else tk.DISABLED
         
         self.view.start_auto_btn.config(state=state)
@@ -248,6 +285,15 @@ class UILogic:
         self.view.stop_auto_btn.config(state=state)
         self.view.copy_url_btn.config(state=state)
         
+        # In Full Auto mode, we freeze manual save buttons to prevent conflicts
+        manual_state = tk.DISABLED if (enabled and full_auto) else tk.NORMAL
+        self.view.btn_save_chunk.config(state=manual_state)
+        self.view.btn_paste_translation.config(state=manual_state)
+        # Note: btn_final_save is usually controlled by session status, 
+        # but in full auto we keep it disabled for manual use.
+        if enabled and full_auto:
+            self.view.btn_final_save.config(state=tk.DISABLED)
+
         if enabled and not self.polling_active:
             self.start_queue_polling()
         elif not enabled:
@@ -292,34 +338,92 @@ class UILogic:
 
     def _poll_queue(self):
         if not self.polling_active:
+            # We don't log here to avoid flooding, but the user should know polling is stopped
             return
 
         item = queue_handler.pop_translation()
         if item:
-            chunk_id = item['chunk_id']
             translation = item['translation']
+            raw_len = len(translation)
             
-            self.view.append_log(f"AI: Received translation for Chunk {chunk_id}")
+            self.view.append_log(f"AI: Processing incoming queue item (Size: {raw_len} chars)...")
             
-            # Auto-inject if the current selected chunk matches
-            if self.session:
-                current_idx = self.view.chunk_combo.current()
-                if current_idx >= 0:
-                    current_chunk = self.session.chunks[current_idx]
-                    if current_chunk.chunk_id == chunk_id:
-                        self.view.txt_translation.delete(1.0, tk.END)
-                        self.view.txt_translation.insert(tk.END, translation)
-                        self.validate_live()
-                        self.view.append_log(f"AI: Injected translation into editor for Chunk {chunk_id}")
+            # Extract signature from the translated text
+            signature, cleaned_translation = TranslationChunk.extract_signature_from_text(translation)
+            
+            if not signature:
+                self.view.append_log(f"AI: ERROR - Signature missing in text. Snippet: '{translation[:50]}...'")
+                self.view.append_log("TIP: The AI must include the '@@CHUNK_SIGNATURE=...@@' header.")
+                return
+            
+            self.view.append_log(f"AI: Found signature '{signature}'. Matching with session...")
+            
+            if not self.session:
+                self.view.append_log("AI: ERROR - No subtitle file is currently open in the editor.")
+                return
+            
+            # Get SessionManager and attempt to acquire the chunk
+            sm = session_manager.get_session_manager()
+            if not sm:
+                self.view.append_log("AI: ERROR - Session manager not found (App lifecycle error).")
+                return
+            
+            # Find the target chunk by signature
+            target_chunk = self.session.get_chunk_by_signature(signature)
+            
+            if not target_chunk:
+                self.view.append_log(f"AI: ERROR - Signature '{signature}' does not match any chunk in the currently open file.")
+                return
+            
+            # Acquire chunk for processing
+            if not sm.acquire_chunk(signature):
+                current_state = sm.get_chunk_state(signature)
+                self.view.append_log(f"AI: Warning - Chunk {target_chunk.chunk_id} is already in {current_state.value} state. Re-processing...")
+                # We allow re-processing of PROCESSING/FAILED chunks for robustness
+                # But we should be careful about COMPLETED. Let's allow it too if automation is on.
+            
+            try:
+                chunk_id = target_chunk.chunk_id
+                
+                # 1. Update the UI selection to match the target chunk
+                target_idx = chunk_id - 1
+                self.view.chunk_combo.current(target_idx)
+                
+                # 2. Trigger standard chunk loading logic
+                self.on_chunk_selected(None)
+                
+                # 3. Inject received translation (cleaned, without signature)
+                self.view.txt_translation.delete(1.0, tk.END)
+                self.view.txt_translation.insert(tk.END, cleaned_translation)
+                
+                # 4. Trigger validation
+                self.validate_live()
+                
+                self.view.append_log(f"AI: Successfully injected translation for Chunk {chunk_id}.")
+                
+                # --- NEW: Automated Flow ---
+                full_auto = self.view.automation_vars["full_auto"].get()
+                if full_auto:
+                    # Check validation status from the UI label
+                    status_text = self.view.lbl_status.cget("text")
+                    if "PASSED" in status_text:
+                        self.view.append_log(f"AI: Validation PASSED. Auto-saving Chunk {chunk_id}...")
+                        self.on_save_chunk_clicked()
+                        
+                        # Check if we should perform auto final save
+                        if sm.can_initiate_final_save():
+                            self.view.append_log("AI: ALL CHUNKS COMPLETED. Initiating auto-finalize...")
+                            # Call final save on the next main thread loop for safety
+                            self.root.after(500, self.on_final_save_clicked)
                     else:
-                        # Store it in session even if not selected? 
-                        # Requirement: "Trigger existing live validation logic"
-                        # For safety, we only inject into the ACTIVE editor.
-                        # But we could also just mark it complete if we were bold.
-                        # Let's stick to safety: inject ONLY into active chunk.
-                        self.view.append_log(f"AI: Chunk {chunk_id} received but not currently selected. Ignoring injection.")
-            else:
-                self.view.append_log("AI: No active session. Ignoring received translation.")
+                        self.view.append_log(f"AI: Validation FAILED. Manual intervention required for Chunk {chunk_id}.")
+                else:
+                    self.view.append_log(f"NOTICE: Please review and click 'Save Chunk' manually.")
+                
+                # Note: Chunk state will be marked COMPLETED when user clicks Save (manually or via on_save_chunk_clicked)
+            except Exception as e:
+                self.view.append_log(f"AI: ERROR during injection: {e}")
+                sm.mark_chunk_failed(signature)
 
         # Poll again in 500ms
         self.root.after(500, self._poll_queue)

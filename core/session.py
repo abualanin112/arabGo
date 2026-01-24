@@ -30,6 +30,11 @@ class TranslationSession:
         self.chunks = split_document(document, max_blocks)
         self.completed_chunks: Dict[int, List[str]] = {}  # chunk_id -> translated_lines
         self.max_blocks = max_blocks
+        self._signature_map: Dict[str, TranslationChunk] = {}  # signature -> chunk
+        
+        # Build signature lookup map
+        for chunk in self.chunks:
+            self._signature_map[chunk.signature] = chunk
     
     def get_chunk_count(self) -> int:
         """Returns the total number of chunks."""
@@ -101,3 +106,33 @@ class TranslationSession:
             full_translation.extend(chunk_translation)
         
         return full_translation
+
+    def get_next_pending_chunk(self) -> Optional[TranslationChunk]:
+        """
+        Returns the first chunk that has not been marked as completed.
+        Returns None if all chunks are completed.
+        """
+        for chunk in self.chunks:
+            if not self.is_chunk_complete(chunk.chunk_id):
+                return chunk
+        return None
+    
+    def get_chunk_by_signature(self, signature: str) -> Optional[TranslationChunk]:
+        """
+        Returns a chunk by its deterministic signature.
+        This allows for concurrent chunk identification without relying on order.
+        
+        Args:
+            signature: The SHA-256 signature of the chunk
+            
+        Returns:
+            TranslationChunk or None if signature not found
+        """
+        return self._signature_map.get(signature)
+    
+    def get_all_signatures(self) -> List[str]:
+        """
+        Returns all chunk signatures in order.
+        Useful for session initialization and diagnostics.
+        """
+        return [chunk.signature for chunk in self.chunks]
