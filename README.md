@@ -75,7 +75,35 @@ arabGo includes an optional integration layer for AI-assisted translation (e.g.,
 - **No Auto-Save**: All AI translations require human review and a manual save action.
 - **Graceful Failure**: If automation fails, the manual copy/paste workflow remains fully functional.
 
+## Setup & Activation
+
+### 1. Enable Virtual Environment
+
+Before running the app, activate the virtual environment:
+
+**CMD:**
+
+```cmd
+.venv\Scripts\activate
+```
+
+**PowerShell:**
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### 2. Install Dependencies
+
+If you haven't already, install the required packages:
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Running the App
+
+After activation, run:
 
 ```bash
 python main.py
