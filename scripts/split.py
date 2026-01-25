@@ -1,16 +1,18 @@
 import os
 import sys
 import re
+import logging
+
+logger = logging.getLogger("split")
 
 def split_srt(input_path, output_dir, chunk_size=600):
     if not os.path.exists(input_path):
-        print(f"Error: Input file {input_path} not found.")
+        logger.error(f"Input file {input_path} not found.")
         sys.exit(1)
 
     ext = os.path.splitext(input_path)[1].lower()
     if ext != '.srt':
-        print(f"Error: split.py ONLY accepts .srt files. Found {ext}.")
-        sys.exit(1)
+        raise ValueError(f"split.py ONLY accepts .srt files. Found {ext}.")
 
     lesson_name = os.path.splitext(os.path.basename(input_path))[0]
     lesson_chunk_dir = os.path.join(output_dir, lesson_name)
@@ -48,20 +50,20 @@ def split_srt(input_path, output_dir, chunk_size=600):
                 lines[0] = str(j + 1)
                 out_f.write('\n'.join(lines) + '\n\n')
 
-    print(f"Successfully split {input_path} into {chunk_count} parts in {lesson_chunk_dir}")
+    logger.info(f"Successfully split {input_path} into {chunk_count} parts in {lesson_chunk_dir}")
 
 def main():
     en_srt_dir = "en_srt"
     chunks_base_dir = "chunks"
 
     if not os.path.exists(en_srt_dir):
-        print(f"Error: {en_srt_dir} directory not found.")
+        logger.error(f"directory not found: {en_srt_dir}")
         sys.exit(1)
 
     srt_files = [f for f in os.listdir(en_srt_dir) if f.lower().endswith('.srt')]
     
     if not srt_files:
-        print(f"No .srt files found in {en_srt_dir}")
+        logger.info(f"No .srt files found in {en_srt_dir}")
         return
 
     for srt_file in srt_files:

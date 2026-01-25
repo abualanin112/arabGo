@@ -1,4 +1,5 @@
 import unittest
+import logging
 import os
 import shutil
 import tempfile
@@ -16,6 +17,9 @@ import vtt_helper
 
 class TestPipeline(unittest.TestCase):
     def setUp(self):
+        # Silence script logging
+        logging.getLogger("split").setLevel(logging.CRITICAL)
+        
         self.test_dir = tempfile.mkdtemp()
         self.en_srt_dir = os.path.join(self.test_dir, 'en_srt')
         self.chunks_dir = os.path.join(self.test_dir, 'chunks')
@@ -71,7 +75,7 @@ class TestPipeline(unittest.TestCase):
 
     def test_split_rejects_vtt(self):
         # split.py should now only accept .srt
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(ValueError):
             split.split_srt(self.sample_vtt, self.chunks_dir)
 
     def test_pipeline_srt_only_integrity(self):

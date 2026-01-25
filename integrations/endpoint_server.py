@@ -11,7 +11,6 @@ from . import session_manager
 app = FastAPI(title="arabGo AI Automation Endpoint")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("endpoint_server")
 
 class TranslationSubmission(BaseModel):
@@ -61,6 +60,7 @@ async def health_check():
     }
 
 def start_server():
+    logging.basicConfig(level=logging.INFO)
     logger.info(f"Starting endpoint server on port {ENDPOINT_PORT}")
     uvicorn.run(app, host="127.0.0.1", port=ENDPOINT_PORT)
 

@@ -1,12 +1,18 @@
 # tests/test_automation.py
 import unittest
+import logging
 from fastapi.testclient import TestClient
 from integrations.endpoint_server import app
-from integrations import queue_handler
+from integrations import queue_handler, session_manager
 
 class TestAutomation(unittest.TestCase):
     def setUp(self):
+        # Silence logging during tests
+        logging.getLogger("endpoint_server").setLevel(logging.CRITICAL)
+        
         self.client = TestClient(app)
+        # Initialize session for tests that require an active session
+        session_manager.initialize_session()
         # Clear queue before each test
         while queue_handler.pop_translation():
             pass
@@ -14,7 +20,9 @@ class TestAutomation(unittest.TestCase):
     def test_health_check(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "healthy"})
+        data = response.json()
+        self.assertEqual(data["status"], "healthy")
+        self.assertIn("session", data)
 
     def test_submit_translation(self):
         payload = {
