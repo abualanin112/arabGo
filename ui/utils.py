@@ -1,15 +1,3 @@
-import os
-import subprocess
-import sys
-from datetime import datetime
-
-# Import vtt_helper from scripts
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
-try:
-    import vtt_helper
-except ImportError:
-    vtt_helper = None
-
 def get_base_path():
     """Returns the base project directory."""
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -70,22 +58,15 @@ def check_and_convert_imports(log_callback):
             
         try:
             log_callback(f"IMPORT: Converting {vtt_file} to SRT...")
-            if vtt_helper:
-                vtt_helper.convert_file_vtt_to_srt(vtt_path)
-                log_callback(f"SUCCESS: Created {os.path.basename(srt_path)}.")
-            else:
-                log_callback("ERROR: vtt_helper module not found.")
+            vtt_converter.convert_file_vtt_to_srt(vtt_path)
+            log_callback(f"SUCCESS: Created {os.path.basename(srt_path)}.")
         except Exception as e:
             log_callback(f"ERROR: Could not convert {vtt_file}: {e}")
 
 def export_to_vtt(srt_path, log_callback):
     """Exports a final SRT file to VTT."""
-    if not vtt_helper:
-        log_callback("ERROR: vtt_helper not found.")
-        return False
-        
     try:
-        vtt_path = vtt_helper.convert_file_srt_to_vtt(srt_path)
+        vtt_path = vtt_converter.convert_file_srt_to_vtt(srt_path)
         log_callback(f"EXPORT: Final VTT created at {os.path.basename(vtt_path)}.")
         return True
     except Exception as e:

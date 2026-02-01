@@ -4,3 +4,4 @@ pyngrok
 python-dotenv
 pydantic
 httpx
+requests

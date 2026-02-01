@@ -63,7 +63,7 @@ def _generate_chunk_signature(blocks: List[SubtitleBlock]) -> str:
     block_ids = "-".join(str(block.index) for block in blocks)
     return hashlib.sha256(block_ids.encode('utf-8')).hexdigest()[:16]
 
-def split_document(document: SubtitleDocument, max_blocks: int = 80) -> List[TranslationChunk]:
+def split_document(document: SubtitleDocument, max_blocks: int = 50) -> List[TranslationChunk]:
     """
     Splits a SubtitleDocument into TranslationChunks.
     
@@ -76,7 +76,7 @@ def split_document(document: SubtitleDocument, max_blocks: int = 80) -> List[Tra
     
     Args:
         document: The SubtitleDocument to split
-        max_blocks: Maximum blocks per chunk (default 80)
+        max_blocks: Maximum blocks per chunk (default 50)
         
     Returns:
         List of TranslationChunk objects in order

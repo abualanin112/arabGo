@@ -18,13 +18,13 @@ class TranslationSession:
     - Final save requires ALL chunks to be completed
     """
     
-    def __init__(self, document: SubtitleDocument, max_blocks: int = 80):
+    def __init__(self, document: SubtitleDocument, max_blocks: int = 50):
         """
         Initialize a new translation session.
         
         Args:
             document: The SubtitleDocument being translated
-            max_blocks: Maximum blocks per chunk
+            max_blocks: Maximum blocks per chunk (default 50)
         """
         self.document = document
         self.chunks = split_document(document, max_blocks)

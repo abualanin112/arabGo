@@ -20,7 +20,7 @@ This software acts as a middleman between a human translator and subtitle files.
 
 ## Why Chunking?
 
-AI models (like ChatGPT) often lose data or hallucinate indices when processing more than 100 subtitle lines at once. By forcing a **Safe Chunk size (default: 80)**, we ensure 100% data integrity and allow for strict per-block validation.
+AI models (like ChatGPT) often lose data or hallucinate indices when processing more than 100 subtitle lines at once. By forcing a **Safe Chunk size (default: 50)**, we ensure 100% data integrity and allow for strict per-block validation.
 
 ## Rules of Operation
 

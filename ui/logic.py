@@ -217,7 +217,6 @@ class UILogic:
         
         # Filter errors specific to this chunk's indices
         # validate_translation currently expects full document, but we want it per chunk
-        # Let's check block count and ID ranges manually or update domain?
         # Requirement: "MUST reuse existing hierarchical validation"
         
         # Strategy: Mock a SubtitleDocument for just this chunk to reuse logic
@@ -305,21 +304,70 @@ class UILogic:
             return
 
         self.view.append_log("Starting local endpoint server...")
-        self.server_thread = threading.Thread(target=endpoint_server.start_server, daemon=True)
+        
+        # 1. Resolve Port (Orchestrator Role)
+        from integrations import config as integration_config
+        try:
+            self.running_port = endpoint_server.find_available_port(integration_config.ENDPOINT_PORT)
+            self.view.append_log(f"Resolved available port: {self.running_port}")
+        except Exception as e:
+            self.view.append_log(f"CRITICAL: Could not find available port: {e}")
+            return
+
+        # 2. Start Server with Explicit Port
+        self.server_thread = threading.Thread(
+            target=endpoint_server.start_server, 
+            args=(self.running_port,), 
+            daemon=True
+        )
         self.server_thread.start()
-        self.view.automation_vars["status"].set("Server Running")
-        self.view.append_log("Endpoint server started on localhost:8765")
+        
+        self.view.automation_vars["status"].set("Starting...")
+        self.view.start_ngrok_btn.config(state=tk.DISABLED) # Disable until ready
+
+        # 3. Wait for readiness in background
+        def check_ready():
+            self.view.append_log("Waiting for server to initialize...")
+            if ngrok_manager.wait_for_server(self.running_port, timeout=20):
+                self.view.automation_vars["status"].set("Server Running")
+                self.view.append_log(f"✓ Server is ready on localhost:{self.running_port}")
+                self.view.start_ngrok_btn.config(state=tk.NORMAL)
+            else:
+                self.view.automation_vars["status"].set("Startup Failed")
+                self.view.append_log("✗ CRITICAL: Server failed to start properly.")
+
+        threading.Thread(target=check_ready, daemon=True).start()
 
     def start_ngrok(self):
-        self.view.append_log("Initializing ngrok tunnel...")
+        # check if server is running
+        if not hasattr(self, 'running_port') or not self.running_port:
+             self.view.append_log("Start the endpoint server first before enabling Ngrok.")
+             return
+
+        self.view.append_log(f"Initializing ngrok tunnel for port {self.running_port}...")
+        self.view.update_status("Starting Ngrok...", "blue")
+
         def do_start():
-            url = ngrok_manager.start_ngrok()
+            # Pass explicit port to ngrok manager
+            # The manager will perform a readiness check (wait_for_server)
+            max_retries = 2
+            url = None
+            
+            for attempt in range(max_retries + 1):
+                if attempt > 0:
+                    self.view.append_log(f"Retry {attempt}/{max_retries} to start ngrok...")
+                
+                url = ngrok_manager.start_ngrok(self.running_port)
+                if url:
+                    break
+                time.sleep(2)
+
             if url:
                 self.view.automation_vars["url"].set(url)
                 self.view.append_log(f"NGROK ACTIVE: {url}")
                 self.view.update_status("Automation Ready", "green")
             else:
-                self.view.append_log("CRITICAL: Ngrok failed. Check .env for NGROK_AUTHTOKEN.")
+                self.view.append_log("CRITICAL: Ngrok failed after retries. Check .env or console.")
                 self.view.update_status("Ngrok Failed", "red")
 
         threading.Thread(target=do_start, daemon=True).start()
