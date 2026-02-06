@@ -27,8 +27,8 @@ class TestSubtitleTool(unittest.TestCase):
         self.assertEqual(extracted[0], "[1] Line one")
         self.assertEqual(extracted[1], "[2] Line two")
         
-        # Test valid translation
-        trans = ["[1] Translated one", "[2] Translated two"]
+        # Test valid translation (Must be Arabic)
+        trans = ["[1] ترجمة واحد", "[2] ترجمة اثنان"]
         errors = doc.validate_translation(trans)
         self.assertEqual(len([e for e in errors if "ERROR" in e]), 0)
         

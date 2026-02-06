@@ -10,13 +10,14 @@ This software acts as a middleman between a human translator and subtitle files.
 
 1.  **Scan**: Click "Scan Folder" and select your project root.
 2.  **Select**: Click a file in the left sidebar. The tool will automatically split large files into **Safe Chunks** (~80 blocks).
-3.  **Chunk Navigation**: Select a chunk (e.g., "Chunk 1 / 5") from the dropdown.
-4.  **Copy**: Click "Copy Current Chunk".
-5.  **Translate**: Get your translation done manually (e.g., in ChatGPT).
-6.  **Paste**: Paste the translation into the bottom area. Ensure each line starts with the correct `[ID]`.
-7.  **Save Chunk**: Click **"1. Save Chunk to Session"**. This stores the translation in memory.
-8.  **Complete All**: Repeat for all chunks. Check the status indicator (e.g., "3/5 chunks completed").
-9.  **Final Save**: Once all chunks are done, click **"2. Final Save to Disk"**.
+3.  **Navigation**: Use the **Next >** / **< Prev** buttons or select a chunk from the dropdown.
+4.  **Chunk Size**: You can adjust the "Chunk Size" (20-100) from the sidebar at any time.
+5.  **Copy**: Click "Copy Current Chunk".
+6.  **Translate**: Get your translation done manually (e.g., in ChatGPT).
+7.  **Paste**: Paste the translation into the bottom area. Ensure each line starts with the correct `[ID]`.
+8.  **Save Chunk**: Click **"1. Save Chunk to Session"**. This stores the translation in memory.
+9.  **Complete All**: Repeat for all chunks. Check the status indicator (e.g., "3/5 chunks completed").
+10. **Final Save**: Once all chunks are done, click **"2. Final Save to Disk"**.
 
 ## Why Chunking?
 
@@ -24,10 +25,22 @@ AI models (like ChatGPT) often lose data or hallucinate indices when processing 
 
 ## Rules of Operation
 
-- **Conversion**: All files are processed as SRT internally. VTT files found during scanning will be normalized immediately.
-- **Validation**:
-  - **ERROR**: Block count mismatch or ID mismatch. You **cannot** save.
-  - **WARNING**: Empty blocks. You can save, but use caution.
+- **Advanced VTT Support**:
+  - Automatically normalizes WebVTT files to SRT.
+  - Detects VTT content even if mislabeled as `.srt`.
+  - Fixes "Short Timestamps" (e.g., `00:05.189`) automatically.
+
+- **Validation Rules**:
+  - **ERROR**: Block count mismatch or ID mismatch.
+  - **ERROR**: Translation contains English characters (Strict Mode).
+  - **ERROR**: Empty blocks (previously a warning).
+  - **Auto-Copy**: If validation fails, the original chunk is automatically copied to clipboard for quick retry.
+
+- **Dynamic Rechunking (New!)**:
+  - You can change the "Chunk Size" (20, 25, 50, 75, 100) **mid-session**.
+  - The system will safely **reorganize your progress** and preserve completed translations.
+  - Any partial overlaps will be marked as PENDING for review.
+
 - **Safety**: The original file is only replaced if the new version is successfully written to a temporary location first.
 
 ## Optional: AI-Assisted Automation
@@ -120,5 +133,5 @@ python -m unittest tests/test_subtitle_tool.py
 ### Automation Tests
 
 ```bash
-python -m unittest tests/test_automation.py
+python -m unittest discover tests
 ```

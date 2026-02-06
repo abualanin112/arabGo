@@ -17,6 +17,21 @@ class SubtitleUI(tk.Frame):
         self.btn_select_dir = ttk.Button(self.sidebar, text="Scan Folder")
         self.btn_select_dir.pack(fill=tk.X, padx=5, pady=5)
         
+        # Configuration Section
+        config_frame = ttk.LabelFrame(self.sidebar, text="Configuration")
+        config_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(config_frame, text="Chunk Size:").pack(anchor=tk.W, padx=5, pady=2)
+        self.chunk_size_var = tk.IntVar(value=50)
+        self.chunk_size_combo = ttk.Combobox(
+            config_frame, 
+            textvariable=self.chunk_size_var, 
+            values=[20, 25, 50, 75, 100], 
+            state="readonly", 
+            width=5
+        )
+        self.chunk_size_combo.pack(fill=tk.X, padx=5, pady=(0, 5))
+        
         self.file_listbox = tk.Listbox(
             self.sidebar, 
             selectmode=tk.SINGLE, 
@@ -37,8 +52,15 @@ class SubtitleUI(tk.Frame):
         self.editor_paned.add(self.chunk_frame, weight=0)
         
         ttk.Label(self.chunk_frame, text="Select Chunk:").pack(side=tk.LEFT, padx=5)
+        
+        self.btn_prev_chunk = ttk.Button(self.chunk_frame, text="< Prev", width=6, state=tk.DISABLED)
+        self.btn_prev_chunk.pack(side=tk.LEFT, padx=2)
+        
         self.chunk_combo = ttk.Combobox(self.chunk_frame, state="readonly", width=30)
         self.chunk_combo.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        self.btn_next_chunk = ttk.Button(self.chunk_frame, text="Next >", width=6, state=tk.DISABLED)
+        self.btn_next_chunk.pack(side=tk.LEFT, padx=2)
         
         self.lbl_chunk_info = ttk.Label(self.chunk_frame, text="0/0 chunks completed", font=("Segoe UI", 9, "italic"))
         self.lbl_chunk_info.pack(side=tk.LEFT, padx=10)

@@ -5,17 +5,53 @@ from .domain import SubtitleDocument
 
 logger = logging.getLogger("vtt_converter")
 
+def _normalize_vtt_timestamps(vtt_text: str) -> str:
+    """
+    Normalize VTT timestamps to the canonical SRT format (HH:MM:SS.mmm).
+
+    Rule:
+    - Normalization happens ONCE at ingestion time.
+    - Only matches structurally valid timestamp lines: "START --> END"
+    - Expands MM:SS.mmm to 00:MM:SS.mmm
+    - Untouched: HH:MM:SS.mmm (already canonical)
+    """
+    # Structural Regex: Matches complete "START --> END" lines only
+    # Captures start and end times to process them individually
+    # Supports optional hours group (?:\\d{2}:)?
+    TIMESTAMP_LINE_PATTERN = re.compile(
+        r'(?P<start>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})\s*-->\s*'
+        r'(?P<end>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})'
+    )
+
+    def normalize_match(match):
+        start = match.group('start')
+        end = match.group('end')
+
+        def canonicalize(ts):
+            # If colon count is 1 (MM:SS.mmm), prepend 00:
+            if ts.count(':') == 1:
+                return f"00:{ts}"
+            return ts
+
+        return f"{canonicalize(start)} --> {canonicalize(end)}"
+
+    return TIMESTAMP_LINE_PATTERN.sub(normalize_match, vtt_text)
+
 def vtt_to_srt_content(vtt_text: str) -> str:
     """
     Normalization Logic:
-    - Removes WEBVTT header and any following metadata (handling multiple lines).
-    - Removes VTT-specific tags like <v>, <c>, <i>, <b>, <u> safely.
-    - Converts timestamps HH:MM:SS.mmm -> HH:MM:SS,mmm using precise regex.
-    - Adds numeric block indices sequentially, avoiding gaps.
-    - Handles VTT Cue Identifiers.
+    - Normalizes ALL timestamps to canonical SRT format (HH:MM:SS.mmm) at ingestion.
+    - Removes WEBVTT header and any following metadata.
+    - Removes VTT-specific tags safely.
+    - Converts timestamps HH:MM:SS.mmm -> HH:MM:SS,mmm.
+    - Adds numeric block indices.
     """
     if not vtt_text.strip().startswith("WEBVTT"):
         raise ValueError("Invalid WebVTT: Missing WEBVTT header.")
+
+    # STEP 1: Canonicalize Timestamps (Structure-Aware)
+    # This guarantees deterministic processing for the rest of the pipeline
+    vtt_text = _normalize_vtt_timestamps(vtt_text)
 
     # 1. Improved Header & Metadata removal
     lines = vtt_text.strip().split('\n')
@@ -115,37 +151,74 @@ def validate_srt_file(path: str):
 
 def normalize_file(file_path: str) -> str:
     """
-    If .vtt, converts to .srt, validates the result, and DELETES the original .vtt.
+    If .vtt, converts to .srt.
+    Also checks if an .srt file actually contains WebVTT content and fixes it.
     Returns path to the final .srt.
     """
     ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".srt":
-        return file_path
     
-    if ext == ".vtt":
+    # 1. Read first line to detect actual format
+    is_vtt_content = False
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            first_line = f.readline().strip()
+            # BOM handling might be needed, but startswith handles basic cases
+            if first_line.startswith('WEBVTT') or 'WEBVTT' in first_line[:10]:
+                is_vtt_content = True
+    except Exception:
+        pass # If we can't read it, assume it's not VTT or let later steps fail
+
+    # 2. Convert if extension is .vtt OR content claims to be VTT
+    if ext == ".vtt" or is_vtt_content:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 vtt_content = f.read()
             
-            srt_content = vtt_to_srt_content(vtt_content)
-            srt_path = os.path.splitext(file_path)[0] + ".srt"
+            # Step 1: Canonicalize Timestamps (Structure-Aware)
+            vtt_content = _normalize_vtt_timestamps(vtt_content)
             
-            with open(srt_path, 'w', encoding='utf-8') as f:
+            srt_content = vtt_to_srt_content(vtt_content)
+            
+            if ext == ".vtt":
+                srt_path = os.path.splitext(file_path)[0] + ".srt"
+            else:
+                # If it's .srt but has VTT content, we overwrite it (or temporary write then rename)
+                srt_path = file_path 
+            
+            # Write to temp file first to be safe if overwriting
+            temp_path = srt_path + ".tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 f.write(srt_content)
                 
             try:
-                validate_srt_file(srt_path)
+                validate_srt_file(temp_path)
             except Exception as e:
-                if os.path.exists(srt_path):
-                    os.remove(srt_path)
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
                 raise ValueError(f"Normalization validation failed: {e}")
 
-            os.remove(file_path)
-            logger.info(f"Successfully normalized {os.path.basename(file_path)} to {os.path.basename(srt_path)}")
+            # Commit changes
+            if os.path.exists(srt_path):
+               # For windows: needs remove before rename
+               try:
+                   os.remove(srt_path)
+               except OSError:
+                   pass
+            os.rename(temp_path, srt_path)
+            
+            if ext == ".vtt":
+                # Remove original VTT only if we created a NEW file
+                os.remove(file_path)
+                
+            logger.info(f"Successfully normalized {os.path.basename(file_path)} to SRT")
             return srt_path
+            
         except Exception as e:
             logger.error(f"Failed to normalize {file_path}: {e}")
             raise
+    
+    if ext == ".srt":
+        return file_path
     
     raise ValueError(f"Unsupported format: {ext}")
 

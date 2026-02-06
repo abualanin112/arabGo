@@ -32,7 +32,12 @@ class UILogic:
         
         self.view.file_listbox.bind("<<ListboxSelect>>", self.on_file_selected)
         self.view.chunk_combo.bind("<<ComboboxSelected>>", self.on_chunk_selected)
+        self.view.chunk_size_combo.bind("<<ComboboxSelected>>", self.on_chunk_size_changed)
         self.view.btn_paste_translation.config(command=self.on_paste_translation_clicked)
+        
+        # Navigation Bindings
+        self.view.btn_prev_chunk.config(command=self.on_prev_chunk)
+        self.view.btn_next_chunk.config(command=self.on_next_chunk)
         
         # Bind Automation events
         self.view.auto_enable_check.config(command=self.toggle_automation)
@@ -112,26 +117,93 @@ class UILogic:
             self.file_map[file_path] = doc
             
             # Initialize Session
-            self.session = TranslationSession(doc)
+            # Initialize Session with Configured Chunk Size
+            chunk_size = self.view.chunk_size_var.get()
+            self.session = TranslationSession(doc, max_blocks=chunk_size)
+            
+            # Note: We keep chunk_size_combo ENABLED to allow dynamic resizing
+            
+            # Initialize SessionManager for automation
             
             # Initialize SessionManager for automation
             sm = session_manager.initialize_session()
             for chunk in self.session.chunks:
                 sm.initialize_chunk(chunk.signature)
             
-            # Update Chunk Selector
-            chunk_names = [f"Chunk {c.chunk_id} (Blocks {c.start_index}-{c.end_index})" for c in self.session.chunks]
-            self.view.chunk_combo.config(values=chunk_names)
-            
-            if chunk_names:
-                self.view.chunk_combo.current(0)
-                self.on_chunk_selected(None)
+            self.refresh_chunk_combo()
             
             self.view.update_status(f"Loaded {os.path.basename(file_path)}", "black")
             self.update_session_stats()
             
         except Exception as e:
             messagebox.showerror("Parse Error", f"Could not parse file: {e}")
+
+    def refresh_chunk_combo(self):
+        """Helper to rebuild the chunk combobox from current session."""
+        if not self.session: return
+        
+        chunk_names = [f"Chunk {c.chunk_id} (Blocks {c.start_index}-{c.end_index})" for c in self.session.chunks]
+        self.view.chunk_combo.config(values=chunk_names)
+        
+        if chunk_names:
+            self.view.chunk_combo.current(0)
+            self.on_chunk_selected(None)
+
+    def on_chunk_size_changed(self, event):
+        """Handle dynamic chunk resizing request."""
+        if not self.session: return
+        
+        new_size = self.view.chunk_size_var.get()
+        if new_size == self.session.max_blocks:
+            return
+
+        # 1. Pause Automation (Safety)
+        was_polling = self.polling_active
+        self.polling_active = False 
+        
+        # 2. Confirmation
+        confirm = messagebox.askyesno(
+            "Resize Session?", 
+            f"Changing chunk size to {new_size} will reorganize your progress.\n\n"
+            "This is a safe operation, but incomplete chunks will need review.\n\n"
+            "Continue?"
+        )
+        
+        if not confirm:
+            # Revert UI selection
+            self.view.chunk_size_var.set(self.session.max_blocks)
+            self.polling_active = was_polling
+            return
+            
+        # 3. Execute Transaction
+        try:
+            stats = self.session.rechunk_session(new_size)
+            self.view.append_log(f"Rechunked to {new_size} blocks. Migrated: {stats['migrated']}, Pending: {stats['pending']}")
+            
+            # 4. Refresh UI
+            self.refresh_chunk_combo()
+            self.update_session_stats()
+            
+            # 5. Smart Navigation: Jump to first pending
+            pending_chunk = self.session.get_next_pending_chunk()
+            if pending_chunk:
+                # Chunk IDs are 1-based, combo index is 0-based
+                new_idx = pending_chunk.chunk_id - 1
+                self.view.chunk_combo.current(new_idx)
+                self.on_chunk_selected(None)
+                self.view.append_log(f"Jumped to first pending chunk: {pending_chunk.chunk_id}")
+            
+            messagebox.showinfo("Resize Complete", f"Session resized successfully.\n{stats['migrated']} chunks preserved.")
+            
+        except Exception as e:
+            messagebox.showerror("Resize Failed", f"Could not resize session: {e}")
+            # Revert UI
+            self.view.chunk_size_var.set(self.session.max_blocks)
+        finally:
+            # 6. Resume Automation
+            if was_polling:
+                self.polling_active = True
+                self.root.after(100, self._poll_queue)
 
     def on_chunk_selected(self, event):
         if not self.session:
@@ -155,8 +227,51 @@ class UILogic:
             
         self.view.txt_translation.focus_set()
             
+            
         self.validate_live()
+        self.update_nav_buttons()
 
+    def update_nav_buttons(self):
+        if not self.session:
+            return
+            
+        current_idx = self.view.chunk_combo.current()
+        total_chunks = len(self.session.chunks)
+        
+        # Disable Prev if at start
+        if current_idx <= 0:
+            self.view.btn_prev_chunk.config(state=tk.DISABLED)
+        else:
+            self.view.btn_prev_chunk.config(state=tk.NORMAL)
+            
+        # Disable Next if at end
+        if current_idx >= total_chunks - 1:
+            self.view.btn_next_chunk.config(state=tk.DISABLED)
+        else:
+            self.view.btn_next_chunk.config(state=tk.NORMAL)
+
+    def on_prev_chunk(self):
+        if not self.session: return
+        
+        current_idx = self.view.chunk_combo.current()
+        if current_idx > 0:
+            self.view.chunk_combo.current(current_idx - 1)
+            self.on_chunk_selected(None)
+
+    def on_next_chunk(self):
+        if not self.session: return
+        
+        # Validation Gate: Prevent moving forward if current chunk is invalid
+        status_text = self.view.lbl_status.cget("text")
+        if "FAILED" in status_text:
+            messagebox.showwarning("Validation Failed", "Please fix errors in the current chunk before proceeding.")
+            return
+
+        current_idx = self.view.chunk_combo.current()
+        if current_idx < len(self.session.chunks) - 1:
+            self.view.chunk_combo.current(current_idx + 1)
+            self.on_chunk_selected(None)
+            
     def update_session_stats(self):
         if self.session:
             status = self.session.get_completion_status()
@@ -463,8 +578,18 @@ class UILogic:
                             self.view.append_log("AI: ALL CHUNKS COMPLETED. Initiating auto-finalize...")
                             # Call final save on the next main thread loop for safety
                             self.root.after(500, self.on_final_save_clicked)
+                    elif "FAILED" in status_text:
+                        self.view.append_log(f"AI: Validation FAILED for Chunk {chunk_id}.")
+                        
+                        # AUTO-COPY Logic
+                        # We want to re-copy the original chunk so user can retry
+                        chunk = self.session.chunks[target_idx]
+                        text_to_copy = chunk.extract_text_with_signature()
+                        self.root.clipboard_clear()
+                        self.root.clipboard_append(text_to_copy)
+                        self.view.append_log("AI: Invalid chunk auto-copied to clipboard for retry.")
                     else:
-                        self.view.append_log(f"AI: Validation FAILED. Manual intervention required for Chunk {chunk_id}.")
+                        self.view.append_log(f"AI: Validation Status Unknown. Manual intervention required.")
                 else:
                     self.view.append_log(f"NOTICE: Please review and click 'Save Chunk' manually.")
                 

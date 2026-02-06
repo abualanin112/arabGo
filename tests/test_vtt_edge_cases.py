@@ -80,5 +80,63 @@ Testing VTT
         self.assertIn("1\n00:00:01,000 --> 00:00:04,000", srt_back)
         self.assertIn("Hello World", srt_back)
 
+
+    def test_vtt_with_short_timestamps(self):
+        """Test VTT files with MM:SS.mmm format (without hours)"""
+        vtt = """WEBVTT
+X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0
+
+00:05.189 --> 00:11.860
+Relative pronouns are THAT, WHICH, WHO, WHOM
+
+00:11.860 --> 00:18.930
+They are used to introduce more information
+
+01:05.250 --> 01:08.890
+This has minutes over 60 seconds (edge case)
+"""
+        srt = vtt_to_srt_content(vtt)
+        
+        # Check that output is not empty
+        self.assertTrue(srt.strip(), "SRT output should not be empty")
+        
+        # Check proper conversion to full format with hours
+        self.assertIn("1\n00:00:05,189 --> 00:00:11,860", srt)
+        self.assertIn("2\n00:00:11,860 --> 00:00:18,930", srt)
+        self.assertIn("3\n00:01:05,250 --> 00:01:08,890", srt)
+        
+        # Check text preservation
+        self.assertIn("Relative pronouns", srt)
+        self.assertIn("introduce more information", srt)
+
+    def test_vtt_mixed_timestamp_formats(self):
+        """Test VTT with both short (MM:SS.mmm) and long (HH:MM:SS.mmm) formats"""
+        vtt = """WEBVTT
+
+00:05.100 --> 00:10.200
+Short format subtitle
+
+01:00:15.300 --> 01:00:20.400
+Long format subtitle with hours
+"""
+        srt = vtt_to_srt_content(vtt)
+        
+        # Both should be properly converted
+        self.assertIn("00:00:05,100 --> 00:00:10,200", srt)
+        self.assertIn("01:00:15,300 --> 01:00:20,400", srt)
+
+    def test_vtt_edge_case_timestamps(self):
+        """Test edge cases: exactly 1 hour, 59:59, etc."""
+        vtt = """WEBVTT
+
+59:59.999 --> 01:00:00.000
+Just before one hour to exactly one hour
+"""
+        srt = vtt_to_srt_content(vtt)
+        
+        # 59:59.999 should become 00:59:59,999
+        # 01:00:00.000 should become 01:00:00,000
+        self.assertIn("00:59:59,999 --> 01:00:00,000", srt)
+
 if __name__ == "__main__":
     unittest.main()

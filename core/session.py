@@ -1,3 +1,4 @@
+import copy
 from typing import List, Dict, Optional
 from .domain import SubtitleDocument
 from .chunking import TranslationChunk, split_document
@@ -136,3 +137,85 @@ class TranslationSession:
         Useful for session initialization and diagnostics.
         """
         return [chunk.signature for chunk in self.chunks]
+
+    def rechunk_session(self, new_max_blocks: int) -> Dict[str, int]:
+        """
+        Transactional resize of session chunks.
+        Restores state if any error occurs.
+        
+        Args:
+            new_max_blocks: New chunk size (blocks per chunk)
+            
+        Returns:
+            Dict with migration stats: {'migrated', 'pending', 'total'}
+            
+        Raises:
+            RuntimeError: If rechunking fails (state is rolled back)
+        """
+        # 1. Snapshot for Rollback
+        original_state = {
+            "max_blocks": self.max_blocks,
+            "chunks": self.chunks,
+            # Deepcopy essential to prevent mutation of the backup
+            "completed_chunks": copy.deepcopy(self.completed_chunks),
+            "signature_map": self._signature_map
+        }
+        
+        try:
+            # 2. Harvest Progress (Atomic Block Level)
+            # Map: absolute_block_index -> translated_line
+            translated_map = {}
+            for chunk_id, lines in self.completed_chunks.items():
+                chunk = self.chunks[chunk_id - 1]
+                for i, line in enumerate(lines):
+                     # inclusive start, inclusive end logic from chunking.py
+                     # Block indices are 1-based usually, but here we rely on chunk.start_index
+                     # chunk.start_index is from the split_document logic
+                     abs_index = chunk.start_index + i
+                     translated_map[abs_index] = line
+            
+            # 3. Apply New Structure
+            self.max_blocks = new_max_blocks
+            self.chunks = split_document(self.document, new_max_blocks)
+            self.completed_chunks = {}
+            self._signature_map = {c.signature: c for c in self.chunks}
+            
+            # 4. Redistribute Progress
+            migrated_count = 0
+            pending_count = 0
+            
+            for chunk in self.chunks:
+                chunk_lines = []
+                all_present = True
+                
+                # Check coverage for this new chunk
+                # split_document uses inclusive ranges [start, end]
+                for idx in range(chunk.start_index, chunk.end_index + 1):
+                    if idx in translated_map:
+                        chunk_lines.append(translated_map[idx])
+                    else:
+                        all_present = False
+                        # If even one line is missing, the chunk is NOT complete.
+                        # We do NOT partially fill it here to keep state simple:
+                        # Either it's DONE (in completed_chunks) or PENDING (not in dict).
+                        break
+                
+                if all_present:
+                    self.completed_chunks[chunk.chunk_id] = chunk_lines
+                    migrated_count += 1
+                else:
+                    pending_count += 1
+            
+            return {
+                "migrated": migrated_count,
+                "pending": pending_count,
+                "total": len(self.chunks)
+            }
+            
+        except Exception as e:
+            # 5. Rollback on Failure
+            self.max_blocks = original_state["max_blocks"]
+            self.chunks = original_state["chunks"]
+            self.completed_chunks = original_state["completed_chunks"]
+            self._signature_map = original_state["signature_map"]
+            raise RuntimeError(f"Rechunk failed, state rolled back: {e}")

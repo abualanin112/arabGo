@@ -13,7 +13,7 @@ import split
 import status
 import check_consistency
 import merge
-import vtt_helper
+from core import vtt_converter
 
 class TestPipeline(unittest.TestCase):
     def setUp(self):
@@ -52,7 +52,7 @@ class TestPipeline(unittest.TestCase):
     def test_vtt_to_srt_conversion(self):
         with open(self.sample_vtt, 'r', encoding='utf-8') as f:
             vtt_content = f.read()
-        srt_content = vtt_helper.vtt_to_srt(vtt_content)
+        srt_content = vtt_converter.vtt_to_srt_content(vtt_content)
         
         # Should have indexes 1, 2, 3
         self.assertTrue(srt_content.startswith("1\n"))
@@ -65,7 +65,7 @@ class TestPipeline(unittest.TestCase):
     def test_srt_to_vtt_conversion(self):
         with open(self.sample_srt, 'r', encoding='utf-8') as f:
             srt_content = f.read()
-        vtt_content = vtt_helper.srt_to_vtt(srt_content)
+        vtt_content = vtt_converter.srt_to_vtt_content(srt_content)
         
         self.assertTrue(vtt_content.startswith("WEBVTT\n"))
         # Should NOT have numeric indexes at line starts
@@ -80,7 +80,7 @@ class TestPipeline(unittest.TestCase):
 
     def test_pipeline_srt_only_integrity(self):
         # 1. Convert VTT to SRT manually (simulating UI behavior)
-        vtt_helper.convert_file_vtt_to_srt(self.sample_vtt)
+        vtt_converter.convert_file_vtt_to_srt(self.sample_vtt)
         converted_srt_path = os.path.join(self.en_srt_dir, "lesson_vtt.srt")
         self.assertTrue(os.path.exists(converted_srt_path))
 

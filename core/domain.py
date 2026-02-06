@@ -72,7 +72,11 @@ class SubtitleDocument:
                 
             content = trans_text[match.end():].strip()
             if not content:
-                results.append(f"WARNING (Line {line_num}): Block [{block.index}] has empty text content.")
+                results.append(f"ERROR (Line {line_num}): Block [{block.index}] has empty text content.")
+                
+            # English Character Check
+            if re.search(r'[a-zA-Z]', content):
+                results.append(f"ERROR (Line {line_num}): Block [{block.index}] contains English characters (Translation must be Arabic).")
 
         return results
 
