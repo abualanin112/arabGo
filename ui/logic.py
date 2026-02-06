@@ -33,7 +33,11 @@ class UILogic:
         self.view.file_listbox.bind("<<ListboxSelect>>", self.on_file_selected)
         self.view.chunk_combo.bind("<<ComboboxSelected>>", self.on_chunk_selected)
         self.view.chunk_size_combo.bind("<<ComboboxSelected>>", self.on_chunk_size_changed)
+        self.view.chunk_size_combo.bind("<<ComboboxSelected>>", self.on_chunk_size_changed)
         self.view.btn_paste_translation.config(command=self.on_paste_translation_clicked)
+        # BIND PASTE EVENT FOR AUTOMATION
+        self.view.txt_translation.bind("<<Paste>>", self.on_clipboard_paste)
+        self.view.txt_translation.bind("<Control-v>", self.on_clipboard_paste)
         
         # Navigation Bindings
         self.view.btn_prev_chunk.config(command=self.on_prev_chunk)
@@ -310,6 +314,82 @@ class UILogic:
         self.view.txt_translation.insert(tk.END, content)
 
         self.validate_live()
+        
+        # Trigger Manual Automation if enabled (same as Ctrl+V)
+        if self.view.automation_vars["full_auto"].get():
+            self.root.after(200, self.trigger_manual_automation)
+
+    def on_clipboard_paste(self, event):
+        """Handle standard paste event to trigger manual automation."""
+        # Allow the paste to happen first (let Tkinter handle insertion)
+        # Then trigger automation after a short delay to ensure text is present
+        self.view.append_log("DEBUG: Paste event detected. Scheduling check...")
+        self.root.after(200, self.trigger_manual_automation)
+
+    def trigger_manual_automation(self):
+        """
+        1. Check if Manual Automation is enabled.
+        2. Validate.
+        3. If Valid -> Save Chunk -> Check Completion -> Finalize -> Next File.
+        """
+        if not self.view.automation_vars["full_auto"].get():
+            self.view.append_log("DEBUG: Manual Automation is DISABLED.")
+            return # Feature disabled
+
+        # 1. Validate
+        self.validate_live()
+        
+        # 2. Check Status
+        status_text = self.view.lbl_status.cget("text")
+        self.view.append_log(f"DEBUG: Validation Status: {status_text}")
+        
+        if "PASSED" in status_text:
+            self.view.append_log("Manual Auto: Validation PASSED. Auto-saving...")
+            
+            # 3. Auto-Save
+            self.on_save_chunk_clicked()
+            
+            # 4. Check for Finalization
+            if self.session and self.session.all_chunks_completed():
+                self.view.append_log("Manual Auto: File Done. Finalizing...")
+                self.on_final_save_clicked()
+                
+                # 5. Move to Next File
+                self.load_next_file()
+            else:
+                # 6. Auto-Move to Next Pending Chunk
+                pending_chunk = self.session.get_next_pending_chunk()
+                if pending_chunk:
+                    idx = pending_chunk.chunk_id - 1
+                    self.view.chunk_combo.current(idx)
+                    self.on_chunk_selected(None)
+                    self.view.append_log(f"Auto-moving to pending chunk: {pending_chunk.chunk_id}")
+
+    def load_next_file(self):
+        """Find and load the next file in the listbox."""
+        size = self.view.file_listbox.size()
+        if size == 0: return
+
+        # Get current selection index
+        selection = self.view.file_listbox.curselection()
+        if not selection:
+            next_idx = 0 
+        else:
+            next_idx = selection[0] + 1
+            
+        if next_idx < size:
+            # Select next file
+            self.view.file_listbox.selection_clear(0, tk.END)
+            self.view.file_listbox.selection_set(next_idx)
+            self.view.file_listbox.activate(next_idx)
+            self.view.file_listbox.see(next_idx)
+            
+            # Trigger load
+            self.on_file_selected(None)
+            self.view.append_log(f"Auto-loaded next file ({next_idx + 1}/{size}).")
+        else:
+            self.view.append_log("✓ All files in list processed.")
+            messagebox.showinfo("Done", "All files in the list have been processed!")
 
     def validate_live(self):
         if not self.session:
