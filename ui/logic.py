@@ -621,7 +621,8 @@ class UILogic:
             # Acquire chunk for processing
             if not sm.acquire_chunk(signature):
                 current_state = sm.get_chunk_state(signature)
-                self.view.append_log(f"AI: Warning - Chunk {target_chunk.chunk_id} is already in {current_state.value} state. Re-processing...")
+                state_val = current_state.value if current_state else "UNKNOWN"
+                self.view.append_log(f"AI: Warning - Chunk {target_chunk.chunk_id} is already in {state_val} state. Re-processing...")
                 # We allow re-processing of PROCESSING/FAILED chunks for robustness
                 # But we should be careful about COMPLETED. Let's allow it too if automation is on.
             
