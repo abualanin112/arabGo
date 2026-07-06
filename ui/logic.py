@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import tkinter as tk
-from integrations import endpoint_server, ngrok_manager, queue_handler, session_manager
+from integrations import endpoint_server, ngrok_manager, queue_handler, session_manager, local_translator
 from tkinter import filedialog, messagebox
 from core.file_ops import scan_directory_threaded, atomic_save
 from core.vtt_converter import normalize_file
@@ -33,11 +33,12 @@ class UILogic:
         self.view.file_listbox.bind("<<ListboxSelect>>", self.on_file_selected)
         self.view.chunk_combo.bind("<<ComboboxSelected>>", self.on_chunk_selected)
         self.view.chunk_size_combo.bind("<<ComboboxSelected>>", self.on_chunk_size_changed)
-        self.view.chunk_size_combo.bind("<<ComboboxSelected>>", self.on_chunk_size_changed)
         self.view.btn_paste_translation.config(command=self.on_paste_translation_clicked)
         # BIND PASTE EVENT FOR AUTOMATION
         self.view.txt_translation.bind("<<Paste>>", self.on_clipboard_paste)
         self.view.txt_translation.bind("<Control-v>", self.on_clipboard_paste)
+        # BIND KEY RELEASE FOR LIVE EVALUATION
+        self.view.txt_translation.bind("<KeyRelease>", self.on_text_edited)
         
         # Navigation Bindings
         self.view.btn_prev_chunk.config(command=self.on_prev_chunk)
@@ -326,6 +327,19 @@ class UILogic:
         self.view.append_log("DEBUG: Paste event detected. Scheduling check...")
         self.root.after(200, self.trigger_manual_automation)
 
+    def on_text_edited(self, event):
+        """Live evaluation on manual edit with debounce."""
+        if hasattr(self, '_validation_timer'):
+            self.root.after_cancel(self._validation_timer)
+            
+        def evaluate_and_maybe_auto_advance():
+            self.validate_live()
+            status_text = self.view.lbl_status.cget("text")
+            if "PASSED" in status_text and self.view.automation_vars["full_auto"].get():
+                self.trigger_manual_automation()
+                
+        self._validation_timer = self.root.after(500, evaluate_and_maybe_auto_advance)
+
     def trigger_manual_automation(self):
         """
         1. Check if Manual Automation is enabled.
@@ -346,24 +360,8 @@ class UILogic:
         if "PASSED" in status_text:
             self.view.append_log("Manual Auto: Validation PASSED. Auto-saving...")
             
-            # 3. Auto-Save
+            # 3. Auto-Save (which now also handles auto-advance and finalization)
             self.on_save_chunk_clicked()
-            
-            # 4. Check for Finalization
-            if self.session and self.session.all_chunks_completed():
-                self.view.append_log("Manual Auto: File Done. Finalizing...")
-                self.on_final_save_clicked()
-                
-                # 5. Move to Next File
-                self.load_next_file()
-            else:
-                # 6. Auto-Move to Next Pending Chunk
-                pending_chunk = self.session.get_next_pending_chunk()
-                if pending_chunk:
-                    idx = pending_chunk.chunk_id - 1
-                    self.view.chunk_combo.current(idx)
-                    self.on_chunk_selected(None)
-                    self.view.append_log(f"Auto-moving to pending chunk: {pending_chunk.chunk_id}")
 
     def load_next_file(self):
         """Find and load the next file in the listbox."""
@@ -448,6 +446,20 @@ class UILogic:
             sm.mark_chunk_completed(chunk.signature)
         
         self.update_session_stats()
+        
+        # If in Full Auto mode, clicking save manually should also advance
+        if self.view.automation_vars.get("full_auto") and self.view.automation_vars["full_auto"].get():
+            if self.session.all_chunks_completed():
+                self.view.append_log("AI: ALL CHUNKS COMPLETED. Initiating auto-finalize...")
+                self.root.after(500, self.on_final_save_clicked)
+                self.root.after(1000, self.load_next_file)
+            elif self.session:
+                pending_chunk = self.session.get_next_pending_chunk()
+                if pending_chunk:
+                    target_idx = pending_chunk.chunk_id - 1
+                    self.view.chunk_combo.current(target_idx)
+                    self.on_chunk_selected(None)
+                    self.view.append_log(f"Auto-moving to pending chunk: {pending_chunk.chunk_id}")
 
     def on_final_save_clicked(self):
         if not self.session or not self.session.all_chunks_completed():
@@ -489,6 +501,7 @@ class UILogic:
             self.view.btn_final_save.config(state=tk.DISABLED)
 
         if enabled and not self.polling_active:
+            local_translator.start_background_init()
             self.start_queue_polling()
         elif not enabled:
             self.polling_active = False
@@ -660,15 +673,54 @@ class UILogic:
                             # Call final save on the next main thread loop for safety
                             self.root.after(500, self.on_final_save_clicked)
                     elif "FAILED" in status_text:
-                        self.view.append_log(f"AI: Validation FAILED for Chunk {chunk_id}.")
-                        
-                        # AUTO-COPY Logic
-                        # We want to re-copy the original chunk so user can retry
-                        chunk = self.session.chunks[target_idx]
-                        text_to_copy = chunk.extract_text_with_signature()
-                        self.root.clipboard_clear()
-                        self.root.clipboard_append(text_to_copy)
-                        self.view.append_log("AI: Invalid chunk auto-copied to clipboard for retry.")
+                        if "English characters" in status_text:
+                            self.view.append_log(f"AI: English characters detected in Chunk {chunk_id}. Triggering offline auto-corrector...")
+                            current_text = self.view.txt_translation.get("1.0", "end-1c")
+                            
+                            def try_auto_correct():
+                                # Check if user changed selection while waiting
+                                if self.view.chunk_combo.current() != target_idx:
+                                    return
+                                    
+                                corrected_text = local_translator.auto_correct_english(current_text)
+                                
+                                if corrected_text == "NOT_READY":
+                                    self.view.update_status("Initializing Translator (Please Wait)...", "orange")
+                                    self.root.after(2000, try_auto_correct)
+                                    return
+                                    
+                                if corrected_text != current_text:
+                                    self.view.txt_translation.delete(1.0, tk.END)
+                                    self.view.txt_translation.insert(tk.END, corrected_text)
+                                    self.validate_live()
+                                    new_status = self.view.lbl_status.cget("text")
+                                    
+                                    if "PASSED" in new_status:
+                                        self.view.append_log(f"AI: Auto-correction successful! Saving Chunk {chunk_id}...")
+                                        self.on_save_chunk_clicked()
+                                        if sm.can_initiate_final_save():
+                                            self.view.append_log("AI: ALL CHUNKS COMPLETED. Initiating auto-finalize...")
+                                            self.root.after(500, self.on_final_save_clicked)
+                                        return
+                                
+                                # If correction failed or wasn't enough
+                                self.view.append_log(f"AI: Validation FAILED for Chunk {chunk_id}.")
+                                chunk = self.session.chunks[target_idx]
+                                text_to_copy = chunk.extract_text_with_signature()
+                                self.root.clipboard_clear()
+                                self.root.clipboard_append(text_to_copy)
+                                self.view.append_log("AI: Invalid chunk auto-copied to clipboard for retry.")
+                            
+                            try_auto_correct()
+                        else:
+                            self.view.append_log(f"AI: Validation FAILED for Chunk {chunk_id}.")
+                            
+                            # AUTO-COPY Logic
+                            chunk = self.session.chunks[target_idx]
+                            text_to_copy = chunk.extract_text_with_signature()
+                            self.root.clipboard_clear()
+                            self.root.clipboard_append(text_to_copy)
+                            self.view.append_log("AI: Invalid chunk auto-copied to clipboard for retry.")
                     else:
                         self.view.append_log(f"AI: Validation Status Unknown. Manual intervention required.")
                 else:

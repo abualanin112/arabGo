@@ -1,15 +1,18 @@
 # integrations/ngrok_manager.py
-from pyngrok import ngrok, conf
 import logging
 import socket
 import time
 import requests
-from .config import NGROK_AUTHTOKEN
-from . import config
+import subprocess
+import os
+import urllib.request
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ngrok_manager")
+
+_tunnel_process = None
 
 def wait_for_server(port, timeout=20):
     """
@@ -22,87 +25,87 @@ def wait_for_server(port, timeout=20):
     logger.info(f"Checking server readiness on port {port} (timeout: {timeout}s)...")
     
     while time.time() - start_time < timeout:
-        # 1. Socket Check
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
             result = sock.connect_ex(('127.0.0.1', port))
             if result == 0:
-                # Socket is open, now check application readiness
                 try:
                     response = requests.get(url, timeout=1)
                     if response.status_code == 200:
                         logger.info(f"✓ Server ready on port {port}")
                         return True
-                    else:
-                        logger.warning(f"Server socket open but health check returned {response.status_code}")
                 except requests.RequestException:
-                    pass # App might be starting up
+                    pass 
         except Exception as e:
-            logger.debug(f"Socket check failed: {e}")
+            pass
         finally:
             sock.close()
                 
         time.sleep(1)
-        elapsed = int(time.time() - start_time)
-        logger.info(f"Waiting for server... ({elapsed}s elapsed)")
-
-    logger.error(f"✗ Timeout waiting for server on port {port} after {timeout} seconds")
+    logger.error(f"✗ Timeout waiting for server on port {port}")
     return False
 
 def start_ngrok(port):
-    """Starts an ngrok tunnel to the local endpoint on the specified port."""
+    """Starts a Cloudflare tunnel (replacing Ngrok due to ISP blocks)."""
+    global _tunnel_process
     if not port:
-        logger.error("No port specified for Ngrok tunnel.")
-        return None
-        
-    if not NGROK_AUTHTOKEN:
-        logger.error("NGROK_AUTHTOKEN not found in environment. Please add it to .env")
+        logger.error("No port specified for tunnel.")
         return None
 
-    # Readiness Gate
     if not wait_for_server(port):
-        logger.error(f"Server not reachable on port {port}. Aborting Ngrok start.")
+        logger.error(f"Server not reachable on port {port}. Aborting tunnel start.")
         return None
 
     try:
-        # Set auth token
-        ngrok.set_auth_token(NGROK_AUTHTOKEN)
+        # We download cloudflared directly since Ngrok is blocked by ISP/Antivirus
+        exe_path = os.path.join(os.path.dirname(__file__), "cloudflared.exe")
+        if not os.path.exists(exe_path):
+            logger.info("Downloading Cloudflare Tunnel binary (one-time setup)...")
+            urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe", exe_path)
+            logger.info("Download complete.")
+            
+        logger.info("Starting Cloudflare Tunnel...")
+        _tunnel_process = subprocess.Popen(
+            [exe_path, "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
         
-        # Start tunnel
-        public_url = ngrok.connect(port).public_url
-        logger.info(f"Ngrok tunnel started: {public_url} -> localhost:{port}")
-        return public_url
+        start_time = time.time()
+        url = None
+        while time.time() - start_time < 20:
+            line = _tunnel_process.stderr.readline()
+            if line:
+                match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+                if match:
+                    url = match.group(0)
+                    logger.info(f"Cloudflare Tunnel started: {url}")
+                    return url
+            else:
+                time.sleep(0.5)
+                
+        logger.error("Failed to extract URL from Cloudflare Tunnel logs.")
+        return None
     except Exception as e:
-        logger.error(f"Failed to start ngrok tunnel: {e}")
+        logger.error(f"Failed to start tunnel: {e}")
         return None
 
 def stop_ngrok():
-    """Stops all active ngrok tunnels."""
+    """Stops all active tunnels."""
+    global _tunnel_process
     try:
-        ngrok.kill()
-        logger.info("Ngrok tunnels stopped.")
+        if _tunnel_process:
+            _tunnel_process.terminate()
+            _tunnel_process = None
+            logger.info("Tunnel stopped.")
         return True
     except Exception as e:
-        logger.error(f"Failed to stop ngrok: {e}")
+        logger.error(f"Failed to stop tunnel: {e}")
         return False
 
 def is_running():
-    """Checks if there are active ngrok tunnels."""
-    try:
-        tunnels = ngrok.get_tunnels()
-        return len(tunnels) > 0
-    except:
-        return False
-
-if __name__ == "__main__":
-    url = start_ngrok()
-    if url:
-        print(f"NGROK_URL={url}")
-        # Keep alive if run directly
-        import time
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            stop_ngrok()
+    global _tunnel_process
+    return _tunnel_process is not None and _tunnel_process.poll() is None

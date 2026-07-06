@@ -5,22 +5,23 @@ from .domain import SubtitleDocument
 
 logger = logging.getLogger("vtt_converter")
 
-def _normalize_vtt_timestamps(vtt_text: str) -> str:
+def _normalize_timestamps(text: str) -> str:
     """
-    Normalize VTT timestamps to the canonical SRT format (HH:MM:SS.mmm).
-
+    Normalize timestamps to the canonical format (HH:MM:SS.mmm or HH:MM:SS,mmm).
+    
     Rule:
     - Normalization happens ONCE at ingestion time.
     - Only matches structurally valid timestamp lines: "START --> END"
-    - Expands MM:SS.mmm to 00:MM:SS.mmm
+    - Expands MM:SS.mmm to 00:MM:SS.mmm (and works for both . and ,)
     - Untouched: HH:MM:SS.mmm (already canonical)
     """
     # Structural Regex: Matches complete "START --> END" lines only
     # Captures start and end times to process them individually
     # Supports optional hours group (?:\\d{2}:)?
+    # Supports both dot (.) and comma (,) as separator for milliseconds
     TIMESTAMP_LINE_PATTERN = re.compile(
-        r'(?P<start>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})\s*-->\s*'
-        r'(?P<end>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})'
+        r'(?P<start>(?:\d{2}:)?\d{2}:\d{2}[.,]\d{3})\s*-->\s*'
+        r'(?P<end>(?:\d{2}:)?\d{2}:\d{2}[.,]\d{3})'
     )
 
     def normalize_match(match):
@@ -35,7 +36,7 @@ def _normalize_vtt_timestamps(vtt_text: str) -> str:
 
         return f"{canonicalize(start)} --> {canonicalize(end)}"
 
-    return TIMESTAMP_LINE_PATTERN.sub(normalize_match, vtt_text)
+    return TIMESTAMP_LINE_PATTERN.sub(normalize_match, text)
 
 def vtt_to_srt_content(vtt_text: str) -> str:
     """
@@ -51,7 +52,7 @@ def vtt_to_srt_content(vtt_text: str) -> str:
 
     # STEP 1: Canonicalize Timestamps (Structure-Aware)
     # This guarantees deterministic processing for the rest of the pipeline
-    vtt_text = _normalize_vtt_timestamps(vtt_text)
+    vtt_text = _normalize_timestamps(vtt_text)
 
     # 1. Improved Header & Metadata removal
     lines = vtt_text.strip().split('\n')
@@ -175,7 +176,7 @@ def normalize_file(file_path: str) -> str:
                 vtt_content = f.read()
             
             # Step 1: Canonicalize Timestamps (Structure-Aware)
-            vtt_content = _normalize_vtt_timestamps(vtt_content)
+            vtt_content = _normalize_timestamps(vtt_content)
             
             srt_content = vtt_to_srt_content(vtt_content)
             
@@ -218,6 +219,36 @@ def normalize_file(file_path: str) -> str:
             raise
     
     if ext == ".srt":
+        # Force normalization even if it's already SRT to expand timestamps
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Apply generic normalization (handles both . and ,)
+            normalized_content = _normalize_timestamps(content)
+            
+            if content != normalized_content:
+                # Only write if changes were made
+                temp_path = file_path + ".tmp"
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    f.write(normalized_content)
+                
+                try:
+                    validate_srt_file(temp_path)
+                    # Commit changes
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    os.rename(temp_path, file_path)
+                    logger.info(f"Normalized timestamps in existing SRT: {os.path.basename(file_path)}")
+                except Exception:
+                     if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                     raise
+
+        except Exception as e:
+            logger.warning(f"Failed to normalize existing SRT {file_path}: {e}")
+            # Non-fatal for existing SRT, just return original path
+        
         return file_path
     
     raise ValueError(f"Unsupported format: {ext}")
